@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Planificadores reales: Windows, Linux y Solaris</title>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --line:#334155; --txt:#e2e8f0; --mut:#94a3b8; --acc:#38bdf8; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,Segoe UI,sans-serif; background:var(--bg); color:var(--txt); padding:20px; }
+  h1 { margin:0 0 4px; font-size:1.5rem; } p.sub { margin:0 0 16px; color:var(--mut); }
+  a { color:var(--acc); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:16px; }
+  .card h2 { margin:0 0 10px; font-size:1rem; color:var(--acc); }
+  select,input,button { font:inherit; color:var(--txt); background:#0b1220; border:1px solid var(--line); border-radius:6px; padding:5px 8px; }
+  input[type=number] { width:62px; }
+  button { cursor:pointer; background:#0369a1; border-color:#0284c7; } button:hover { background:#0284c7; }
+  button.sec { background:#334155; border-color:#475569; }
+  button.tab { background:#0b1220; border-color:var(--line); padding:8px 16px; }
+  button.tab.on { background:#0369a1; border-color:#0284c7; }
+  table { border-collapse:collapse; width:100%; font-size:.88rem; }
+  th,td { border-bottom:1px solid var(--line); padding:4px 6px; text-align:center; } th { color:var(--mut); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px; }
+  .tl { overflow-x:auto; } .tl .r { display:flex; align-items:center; height:24px; }
+  .tl .n { position:sticky; left:0; background:var(--card); width:34px; flex:0 0 34px; font-weight:700; z-index:1; }
+  .c { flex:0 0 12px; height:18px; border-right:1px solid #0b122055; }
+  .c.ready { background:repeating-linear-gradient(45deg,#475569,#475569 2px,#1e293b 2px,#1e293b 4px); }
+  .c.cur { outline:2px solid #fff; outline-offset:-2px; z-index:2; }
+  .legend { color:var(--mut); font-size:.8rem; margin-top:6px; }
+  .chip { display:inline-block; padding:2px 8px; margin:2px; border-radius:6px; color:#0b1220; font-weight:700; }
+  ol.steps li { margin:5px 0; } ol.steps { padding-left:20px; margin:0; }
+  #log li { margin:4px 0; } #log { padding-left:18px; margin:0; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:16px; } @media(max-width:900px){.two{grid-template-columns:1fr;}}
+  .two > div { min-width:0; }
+  input[type=range]{width:100%;padding:0;}
+  code { background:#0b1220; padding:1px 5px; border-radius:4px; }
+  .best { color:#4ade80; font-weight:700; }
+</style>
+</head>
+<body>
+<h1>Planificadores reales: Windows · Linux · Solaris</h1>
+<p class="sub">Mismos hilos, tres políticas distintas. Cada columna = 1 tick = 10 ms. Recorre la simulación y lee por qué el SO toma cada decisión. <a href="index.html">← Simulador FCFS/SJF/SRTF/RR</a></p>
+
+<div class="card">
+  <h2>Carga de trabajo (hilos)</h2>
+  <table>
+    <thead><tr><th>Hilo</th><th>Ráfaga CPU (ticks)</th><th>Espera E/S (ticks, 0 = solo CPU)</th><th>Windows: prioridad base (1-15)</th><th>Linux: nice (-20..19)</th><th>Solaris: prioridad TS (0-59)</th><th></th></tr></thead>
+    <tbody id="th"></tbody>
+  </table>
+  <div class="row">
+    <button id="add" class="sec">+ Hilo</button>
+    <button id="preset" class="sec">Restaurar ejemplo</button>
+    <label>Duración (ticks) <input id="hz" type="number" min="20" max="200" value="80"></label>
+    <button id="go">▶ Simular los 3 SO</button>
+  </div>
+  <div class="legend">Ejemplo: A y B son procesos de cálculo (nunca se bloquean); C es interactivo (corre 1 tick y espera E/S 5); D es mixto. Observa qué SO atiende mejor a C.</div>
+</div>
+
+<div class="row" style="margin:0 0 12px">
+  <button class="tab on" data-os="win">Windows (NT)</button>
+  <button class="tab" data-os="lin">Linux (CFS)</button>
+  <button class="tab" data-os="sol">Solaris (clase TS)</button>
+</div>
+
+<div class="two">
+  <div>
+    <div class="card"><h2 id="osTitle"></h2><ol class="steps" id="osSteps"></ol></div>
+    <div class="card" id="extra"></div>
+  </div>
+  <div>
+    <div class="card">
+      <h2>Línea de tiempo</h2>
+      <div class="tl" id="tl"></div>
+      <div class="legend">Color = ejecutando en CPU · rayado = listo esperando CPU · vacío = bloqueado en E/S · borde blanco = tick actual</div>
+      <input type="range" id="t" min="0" max="0" value="0" style="margin-top:10px">
+      <div class="row">
+        <button id="prev" class="sec">⏮</button><button id="play">⏵ Reproducir</button><button id="next" class="sec">⏭</button>
+        <span>Tick: <b id="tn">0</b> (<span id="ms">0</span> ms)</span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Estado en este tick</h2>
+      <div id="state"></div>
+      <h2 style="margin-top:12px">Paso a paso: qué decide el SO</h2>
+      <ol id="log"></ol>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Resultados comparados (misma carga)</h2>
+  <div id="cmp"></div>
+  <div class="legend">Latencia de despertar = ticks desde que el hilo termina su E/S hasta que vuelve a la CPU (menor = mejor interactividad). Espera = ticks totales listo sin CPU.</div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const COL = ['#38bdf8','#4ade80','#facc15','#f87171','#c084fc','#fb923c'];
+const NAMES = 'ABCDEF';
+let threads = [], sims = {}, os = 'win', timer = null;
+
+/* ---------- Parámetros de cada SO ---------- */
+const WIN_Q = 2;          // quantum de cliente ≈ 20 ms
+const WIN_BOOST = 2;      // aumento al terminar E/S
+const LIN_LAT = 6, LIN_MIN = 1; // sched_latency y min_granularity (ticks)
+// Tabla de despacho TS de Solaris: [prio inicial banda, quantum ms, slpret]
+const SOL_BANDS = [[0,200,50],[10,160,51],[20,120,52],[30,80,53],[40,40,55],[45,40,56],[50,40,58],[59,20,59]];
+const solRow = p => { let b = SOL_BANDS[0]; for (const x of SOL_BANDS) if (p >= x[0]) b = x; return { q: b[1] / 10, tqexp: Math.max(0, p - 10), slpret: b[2] }; };
+
+/* ---------- Motor ---------- */
+function sim(kind, defs, H) {
+  const T = defs.map((d, i) => ({ i, name: NAMES[i], burst: d.burst, io: d.io, wbase: d.win, wprio: d.win,
+    w: 1024 / Math.pow(1.25, d.nice), nice: d.nice, vr: 0, sprio: d.sol, left: d.burst, wake: 0, wokeAt: 0, pend: true,
+    wq: WIN_Q, sq: solRow(d.sol).q, used: 0, cpu: 0, wait: 0, lats: [], sw: 0, sleeping: false }));
+  let rq = T.slice(), cur = null, minVr = 0, last = null;
+  const frames = [];
+  for (let t = 0; t < H; t++) {
+    const ev = [];
+    // 1) Despertares
+    T.filter(x => x.sleeping && x.wake <= t).forEach(x => {
+      x.sleeping = false; x.left = x.burst; x.wokeAt = t; x.pend = true; rq.push(x);
+      if (kind === 'win') { const o = x.wprio; x.wprio = Math.min(15, x.wbase + WIN_BOOST); x.wq = WIN_Q;
+        ev.push(`${x.name} termina su E/S: Windows le da un <b>boost de +${WIN_BOOST}</b> (prioridad ${o} → ${x.wprio}) para favorecer la interactividad.`); }
+      else if (kind === 'sol') { const o = x.sprio; x.sprio = solRow(o).slpret; x.sq = solRow(x.sprio).q;
+        ev.push(`${x.name} regresa de dormir: la tabla de despacho (<code>ts_slpret</code>) sube su prioridad ${o} → ${x.sprio} y su quantum pasa a ${x.sq * 10} ms.`); }
+      else { const nv = Math.max(x.vr, minVr - LIN_LAT / 2);
+        ev.push(`${x.name} despierta: CFS le da <b>crédito de dormilón</b>, su vruntime ${x.vr.toFixed(1)} → ${nv.toFixed(1)} (no puede quedar muy por debajo de min_vruntime=${minVr.toFixed(1)}).`); x.vr = nv; }
+    });
+    // 2) Decisión de planificación
+    const pickBy = f => rq.reduce((b, x) => (!b || f(x) < f(b)) ? x : b, null);
+    const pickPrio = g => rq.reduce((b, x) => (!b || g(x) > g(b)) ? x : b, null);
+    const prio = x => kind === 'win' ? x.wprio : x.sprio;
+    const choose = (x, why) => { if (x === cur) return; cur = x; x.used = 0; rq = rq.filter(y => y !== x); ev.push(why); };
+    if (kind === 'lin') {
+      if (cur) {
+        const sumW = cur.w + rq.reduce((s, x) => s + x.w, 0);
+        const slice = Math.max(LIN_MIN, LIN_LAT * cur.w / sumW);
+        const m = rq.length ? pickBy(x => x.vr) : null;
+        if (m && cur.used >= slice) {
+          rq.push(cur); const prev = cur; cur = null;
+          const n = pickBy(x => x.vr); choose(n, `${prev.name} agotó su porción ideal (${slice.toFixed(1)} ticks = latencia·peso/Σpesos). CFS elige el de <b>menor vruntime</b>: ${n.name} (${n.vr.toFixed(1)}).`);
+        } else if (m && m.vr < cur.vr - 1) {
+          const prev = cur; rq.push(cur); cur = null; choose(m, `<b>Expropiación por despertar</b>: ${m.name} (vruntime ${m.vr.toFixed(1)}) está claramente por debajo de ${prev.name} (${prev.vr.toFixed(1)}); lo ha usado menos.`);
+        }
+      } else if (rq.length) { const n = pickBy(x => x.vr); choose(n, `CPU libre: CFS toma el nodo más a la izquierda del árbol rojo-negro → ${n.name} (vruntime ${n.vr.toFixed(1)}).`); }
+    } else {
+      const best = rq.length ? pickPrio(prio) : null;
+      if (!cur && best) choose(best, `CPU libre: se elige el hilo listo de <b>mayor prioridad</b> → ${best.name} (prioridad ${prio(best)}).`);
+      else if (cur && best && prio(best) > prio(cur)) { const p = cur; rq.unshift(cur); cur = null;
+        choose(best, `<b>Expropiación</b>: ${best.name} (prio ${prio(best)}) supera a ${p.name} (prio ${prio(p)}); ${p.name} vuelve al <i>inicio</i> de su cola conservando su quantum restante.`); }
+    }
+    if (cur && cur.pend) { cur.lats.push(t - cur.wokeAt); cur.pend = false; }
+    if (cur && cur !== last) cur.sw++;
+    last = cur;
+    // 3) Instantánea
+    const fr = { cur: cur ? cur.i : -1, ev,
+      th: T.map(x => ({ st: x === cur ? 'run' : rq.includes(x) ? 'ready' : 'sleep', p: kind === 'win' ? x.wprio : kind === 'sol' ? x.sprio : null, vr: x.vr,
+        q: kind === 'win' ? x.wq : kind === 'sol' ? x.sq : null })),
+      rq: rq.map(x => x.i) };
+    // 4) Ejecutar 1 tick
+    rq.forEach(x => x.wait++);
+    if (cur) {
+      cur.cpu++; cur.left--; cur.used++;
+      if (kind === 'lin') cur.vr += 1024 / cur.w; else if (kind === 'win') cur.wq--; else cur.sq--;
+    }
+    { const v = [cur, ...rq].filter(Boolean).map(x => x.vr); if (v.length) minVr = Math.max(minVr, Math.min(...v)); }
+    if (cur) {
+      if (cur.left === 0 && cur.io > 0) {
+        ev.push(`${cur.name} termina su ráfaga y se <b>bloquea</b> por E/S ${cur.io} ticks; sale de la CPU.`);
+        cur.sleeping = true; cur.wake = t + 1 + cur.io; cur = null;
+      } else if (cur.left === 0) { cur.left = cur.burst; }
+      if (cur && kind === 'win' && cur.wq <= 0) {
+        const o = cur.wprio; if (cur.wprio > cur.wbase) cur.wprio--; cur.wq = WIN_Q;
+        ev.push(`Se acabó el quantum de ${cur.name}: ${o > cur.wprio ? `su prioridad <b>decae</b> ${o} → ${cur.wprio} (hacia la base ${cur.wbase})` : 'mantiene su prioridad base'}; va al <i>final</i> de su cola (round robin entre iguales).`);
+        rq.push(cur); cur = null;
+      } else if (cur && kind === 'sol' && cur.sq <= 0) {
+        const o = cur.sprio, r = solRow(o); cur.sprio = r.tqexp; cur.sq = solRow(cur.sprio).q;
+        ev.push(`Se acabó el quantum de ${cur.name}: <code>ts_tqexp</code> <b>baja su prioridad</b> ${o} → ${cur.sprio} (los que consumen CPU pierden prioridad) y su nuevo quantum es ${cur.sq * 10} ms; va al final de la cola.`);
+        rq.push(cur); cur = null;
+      }
+    }
+    frames.push(fr);
+  }
+  return { frames, T };
+}
+
+/* ---------- Texto explicativo ---------- */
+const INFO = {
+  win: { title: 'Windows NT: prioridades con expropiación (Round Robin por nivel)', steps: [
+    'Existen <b>32 niveles</b> de prioridad: 0 (hilo de páginas en cero), 1-15 <i>dinámicos</i> y 16-31 <i>tiempo real</i>. Hay una cola de listos por nivel.',
+    'El despachador siempre ejecuta el hilo listo de <b>mayor prioridad</b>. Si uno de mayor prioridad se vuelve listo, <b>expropia</b> al actual (este vuelve al inicio de su cola).',
+    'Dentro de un mismo nivel se aplica <b>Round Robin</b> con un quantum (~20 ms en cliente, más largo en servidor). Aquí: 2 ticks.',
+    'Al agotar el quantum, si el hilo tenía un boost su prioridad <b>baja 1</b> hacia la base, y pasa al final de su cola.',
+    'Al terminar una E/S el hilo recibe un <b>boost</b> (+1…+8 según el dispositivo; aquí +2) hasta un máximo de 15. Así los hilos interactivos reaccionan rápido.',
+    'Anti-inanición (no simulado, requiere &gt;4 s): un hilo listo sin correr sube a 15 por 2 quantums. En multiprocesador además hay afinidad y un hilo ideal por CPU.'] },
+  lin: { title: 'Linux: CFS (Completely Fair Scheduler, 2.6.23–6.5; EEVDF desde 6.6)', steps: [
+    'No hay quantum fijo: cada tarea acumula <code>vruntime</code> = tiempo de CPU ponderado por su <b>peso</b> (derivado de <code>nice</code>; peso = 1024 / 1.25<sup>nice</sup>).',
+    'Las tareas listas están en un <b>árbol rojo-negro</b> ordenado por vruntime. Se ejecuta la de <b>menor vruntime</b> (la más “perjudicada”).',
+    'Cada tick: <code>vruntime += tick · 1024 / peso</code>. Con nice menor el peso es mayor, el vruntime crece más lento y la tarea recibe más CPU.',
+    'Porción ideal = <code>sched_latency · peso / Σpesos</code> (mínimo <code>min_granularity</code>). Al agotarla se vuelve a elegir al menor vruntime.',
+    'Al despertar, vruntime = max(suyo, min_vruntime − latency/2): el que durmió obtiene <b>ventaja</b> sin poder acaparar la CPU; puede <b>expropiar</b> si su vruntime es claramente menor.',
+    'Las clases <code>SCHED_FIFO/RR</code> (tiempo real) tienen prioridad absoluta sobre CFS. EEVDF reemplaza “menor vruntime” por “menor deadline virtual entre los elegibles”.'] },
+  sol: { title: 'Solaris/UNIX SVR4: clases de planificación, Time-Sharing con tabla de despacho', steps: [
+    'Cada hilo pertenece a una <b>clase</b>: TS (tiempo compartido, prio 0-59), IA, FSS, FX, SYS y RT (100-159). Mayor número = mayor prioridad global.',
+    'Se ejecuta el hilo listo de mayor prioridad; uno de mayor prioridad <b>expropia</b> al actual. Misma prioridad → Round Robin.',
+    'En TS la <b>tabla de despacho</b> da, por prioridad: <code>quantum</code> (200 ms en prio 0 … 20 ms en prio 59), <code>tqexp</code> y <code>slpret</code>.',
+    '<b>Quantum agotado</b> (consumió mucha CPU) → nueva prioridad = <code>ts_tqexp</code> (más baja) y quantum distinto: castiga a los procesos de cálculo.',
+    '<b>Regresa de dormir</b> (E/S) → prioridad = <code>ts_slpret</code> (50-59, alta): premia a los interactivos.',
+    'Opuesto de Windows: aquí a menor prioridad, <b>quantum más largo</b> (menos cambios de contexto para los de cálculo). <code>ts_maxwait/lwait</code> suben a los hilos que esperan demasiado (anti-inanición).'] }
+};
+
+/* ---------- UI ---------- */
+function defaults() { threads = [
+  { burst: 1000, io: 0, win: 8, nice: 0, sol: 29 }, { burst: 1000, io: 0, win: 8, nice: 0, sol: 29 },
+  { burst: 1, io: 5, win: 8, nice: 0, sol: 29 }, { burst: 3, io: 4, win: 8, nice: 0, sol: 29 }]; }
+function renderTh() {
+  $('th').innerHTML = threads.map((d, i) => `<tr><td><span class="chip" style="background:${COL[i]}">${NAMES[i]}</span></td>` +
+    ['burst', 'io', 'win', 'nice', 'sol'].map(f => `<td><input type="number" data-i="${i}" data-f="${f}" value="${d[f]}"></td>`).join('') +
+    `<td><button class="sec" data-del="${i}">✕</button></td></tr>`).join('');
+}
+$('th').addEventListener('input', e => { const d = e.target.dataset; if (d.f) threads[+d.i][d.f] = parseInt(e.target.value, 10) || 0; });
+$('th').addEventListener('click', e => { const i = e.target.dataset.del; if (i !== undefined && threads.length > 1) { threads.splice(+i, 1); renderTh(); } });
+$('add').onclick = () => { if (threads.length < 6) { threads.push({ burst: 2, io: 3, win: 8, nice: 0, sol: 29 }); renderTh(); } };
+$('preset').onclick = () => { defaults(); renderTh(); };
+
+function run() {
+  stop();
+  threads.forEach(d => { d.burst = Math.max(1, d.burst); d.io = Math.max(0, d.io); d.win = Math.min(15, Math.max(1, d.win)); d.nice = Math.min(19, Math.max(-20, d.nice)); d.sol = Math.min(59, Math.max(0, d.sol)); });
+  renderTh();
+  const H = Math.min(200, Math.max(20, parseInt($('hz').value, 10) || 80));
+  ['win', 'lin', 'sol'].forEach(k => sims[k] = sim(k, threads, H));
+  $('t').max = H - 1; $('t').value = 0;
+  show(); compare();
+}
+function show() {
+  const S = sims[os]; if (!S) return;
+  const t = +$('t').value, fr = S.frames[t];
+  $('osTitle').textContent = INFO[os].title;
+  $('osSteps').innerHTML = INFO[os].steps.map(s => `<li>${s}</li>`).join('');
+  // timeline
+  $('tl').innerHTML = S.T.map((x, i) => `<div class="r"><div class="n"><span style="color:${COL[i]}">${x.name}</span></div>` +
+    S.frames.map((f, k) => { const s = f.th[i].st; return `<div class="c ${s === 'ready' ? 'ready' : ''} ${k === t ? 'cur' : ''}" style="${s === 'run' ? 'background:' + COL[i] : ''}"></div>`; }).join('') + '</div>').join('') +
+    `<div class="r"><div class="n"></div>${S.frames.map((_, k) => `<div class="c" style="font-size:9px;color:#94a3b8;border:0">${k % 5 === 0 ? k : ''}</div>`).join('')}</div>`;
+  $('tn').textContent = t; $('ms').textContent = t * 10;
+  const lbl = { run: 'EN CPU', ready: 'listo', sleep: 'bloqueado (E/S)' };
+  const hdr = os === 'win' ? '<th>Prioridad actual</th><th>Quantum restante</th>' : os === 'sol' ? '<th>Prioridad TS</th><th>Quantum restante</th>' : '<th>vruntime</th><th>Peso</th>';
+  $('state').innerHTML = `<table><thead><tr><th>Hilo</th><th>Estado</th>${hdr}</tr></thead><tbody>` + S.T.map((x, i) => {
+    const h = fr.th[i];
+    const cells = os === 'lin' ? `<td>${h.vr.toFixed(1)}</td><td>${x.w.toFixed(0)}</td>` : `<td>${h.p}</td><td>${h.q}</td>`;
+    return `<tr><td><span class="chip" style="background:${COL[i]}">${x.name}</span></td><td${h.st === 'run' ? ' class="best"' : ''}>${lbl[h.st]}</td>${cells}</tr>`;
+  }).join('') + `</tbody></table><div style="margin-top:8px">Cola de listos: ${fr.rq.length ? fr.rq.map(i => `<span class="chip" style="background:${COL[i]}">${NAMES[i]}</span>`).join('') : '—'}</div>`;
+  $('log').innerHTML = fr.ev.length ? fr.ev.map(e => `<li>${e}</li>`).join('') : `<li>Sin cambios: ${fr.cur >= 0 ? NAMES[fr.cur] + ' continúa ejecutando su quantum/porción.' : 'CPU ociosa (todos bloqueados).'}</li>`;
+  $('extra').innerHTML = os === 'sol' ? solTable() : os === 'lin' ? linTable() : winTable();
+}
+function solTable() { return '<h2>Tabla de despacho TS (extracto)</h2><table><thead><tr><th>Prio</th><th>Quantum</th><th>tqexp</th><th>slpret</th></tr></thead><tbody>' +
+  [0, 10, 20, 30, 40, 50, 59].map(p => { const r = solRow(p); return `<tr><td>${p}</td><td>${r.q * 10} ms</td><td>${r.tqexp}</td><td>${r.slpret}</td></tr>`; }).join('') + '</tbody></table>'; }
+function linTable() { return '<h2>Pesos CFS por nice</h2><table><thead><tr><th>nice</th><th>-10</th><th>-5</th><th>0</th><th>5</th><th>10</th></tr></thead><tbody><tr><th>peso</th>' +
+  [-10, -5, 0, 5, 10].map(n => `<td>${Math.round(1024 / Math.pow(1.25, n))}</td>`).join('') + '</tr></tbody></table><div class="legend">Cada nivel de nice ≈ 10 % más o menos de CPU.</div>'; }
+function winTable() { return '<h2>Niveles de prioridad</h2><table><tbody><tr><td>31-16</td><td>Tiempo real (no varían)</td></tr><tr><td>15-1</td><td>Dinámicas (boost/decay)</td></tr><tr><td>0</td><td>Hilo de páginas en cero</td></tr></tbody></table><div class="legend">Prioridad = clase de proceso + prioridad relativa del hilo.</div>'; }
+
+function compare() {
+  const names = { win: 'Windows', lin: 'Linux CFS', sol: 'Solaris TS' };
+  const rows = threads.map((_, i) => {
+    return `<tr><td><span class="chip" style="background:${COL[i]}">${NAMES[i]}</span></td>` + ['win', 'lin', 'sol'].map(k => {
+      const x = sims[k].T[i], av = x.lats.length ? (x.lats.reduce((a, b) => a + b, 0) / x.lats.length).toFixed(2) : '—';
+      return `<td>${x.cpu}</td><td>${x.wait}</td><td>${av}</td>`; }).join('') + '</tr>';
+  }).join('');
+  const sw = k => sims[k].T.reduce((s, x) => s + x.sw, 0);
+  $('cmp').innerHTML = `<table><thead><tr><th rowspan="2">Hilo</th>${Object.values(names).map(n => `<th colspan="3">${n}</th>`).join('')}</tr>
+    <tr>${'<th>CPU</th><th>Espera</th><th>Lat. despertar</th>'.repeat(3)}</tr></thead><tbody>${rows}
+    <tr><td>Cambios de contexto</td>${['win', 'lin', 'sol'].map(k => `<td colspan="3">${sw(k)}</td>`).join('')}</tr></tbody></table>`;
+}
+
+function stop() { clearInterval(timer); timer = null; $('play').textContent = '⏵ Reproducir'; }
+function step(d) { const e = $('t'); e.value = Math.max(0, Math.min(+e.max, +e.value + d)); show(); }
+$('go').onclick = run; $('t').oninput = show;
+$('prev').onclick = () => { stop(); step(-1); }; $('next').onclick = () => { stop(); step(1); };
+$('play').onclick = () => { if (timer) return stop(); if (+$('t').value >= +$('t').max) $('t').value = 0;
+  $('play').textContent = '⏸ Pausar'; timer = setInterval(() => { if (+$('t').value >= +$('t').max) return stop(); step(1); }, 400); };
+document.querySelectorAll('.tab').forEach(b => b.onclick = () => { os = b.dataset.os; document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === b)); show(); });
+
+defaults(); renderTh(); run();
+</script>
+</body>
+</html>

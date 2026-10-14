@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simulador de planificación de CPU</title>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --line:#334155; --txt:#e2e8f0; --mut:#94a3b8; --acc:#38bdf8; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,Segoe UI,sans-serif; background:var(--bg); color:var(--txt); padding:20px; }
+  h1 { margin:0 0 4px; font-size:1.5rem; }
+  p.sub { margin:0 0 16px; color:var(--mut); }
+  .grid { display:grid; grid-template-columns:minmax(300px,380px) 1fr; gap:16px; }
+  @media (max-width:850px){ .grid{grid-template-columns:1fr;} }
+  .grid > div { min-width:0; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:16px; }
+  .card h2 { margin:0 0 10px; font-size:1rem; color:var(--acc); }
+  label { display:block; font-size:.85rem; color:var(--mut); margin:8px 0 4px; }
+  select,input,button { font:inherit; color:var(--txt); background:#0b1220; border:1px solid var(--line); border-radius:6px; padding:6px 8px; }
+  select { max-width:100%; }
+  input[type=number] { width:70px; }
+  button { cursor:pointer; background:#0369a1; border-color:#0284c7; }
+  button:hover { background:#0284c7; }
+  button.sec { background:#334155; border-color:#475569; }
+  button.del { background:#7f1d1d; border-color:#991b1b; padding:4px 8px; }
+  table { border-collapse:collapse; width:100%; font-size:.9rem; }
+  th,td { border-bottom:1px solid var(--line); padding:5px 6px; text-align:center; }
+  th { color:var(--mut); font-weight:600; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px; }
+  .gantt { display:flex; overflow-x:auto; padding-bottom:4px; }
+  .seg { flex:0 0 auto; height:42px; display:flex; align-items:center; justify-content:center; color:#0b1220; font-weight:700; border-right:1px solid #0b1220; font-size:.85rem; }
+  .seg.idle { background:repeating-linear-gradient(45deg,#475569,#475569 4px,#334155 4px,#334155 8px); color:var(--txt); }
+  .seg.future { opacity:.18; }
+  .axis { display:flex; overflow-x:auto; color:var(--mut); font-size:.72rem; }
+  .axis div { flex:0 0 auto; text-align:left; border-left:1px solid var(--line); padding-left:2px; }
+  .chip { display:inline-block; min-width:34px; padding:4px 8px; margin:2px; border-radius:6px; color:#0b1220; font-weight:700; text-align:center; }
+  .status { display:flex; gap:24px; flex-wrap:wrap; }
+  .status b { color:var(--acc); }
+  input[type=range] { width:100%; padding:0; }
+  tfoot td { font-weight:700; color:var(--acc); }
+  .err { color:#fca5a5; font-size:.85rem; min-height:1.1em; }
+  .legend { color:var(--mut); font-size:.8rem; margin-top:6px; }
+</style>
+</head>
+<body>
+<h1>Simulador de planificación de CPU</h1>
+<p class="sub">FCFS · SJF · SRTF · Round Robin — edita los procesos, elige el algoritmo y recorre la simulación tiempo a tiempo. <a href="so-reales.html" style="color:#38bdf8">Ver Windows, Linux y Solaris →</a></p>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <h2>Configuración</h2>
+      <label for="algo">Algoritmo</label>
+      <select id="algo">
+        <option value="fcfs">FCFS (First Come, First Served)</option>
+        <option value="sjf">SJF (Shortest Job First, no expropiativo)</option>
+        <option value="srtf">SRTF (Shortest Remaining Time First)</option>
+        <option value="rr">Round Robin</option>
+      </select>
+      <div id="qWrap" style="display:none">
+        <label for="quantum">Quantum</label>
+        <input id="quantum" type="number" min="1" value="3">
+      </div>
+      <div class="err" id="err"></div>
+    </div>
+
+    <div class="card">
+      <h2>Procesos</h2>
+      <table>
+        <thead><tr><th>PID</th><th>Llegada</th><th>Ráfaga</th><th></th></tr></thead>
+        <tbody id="procs"></tbody>
+      </table>
+      <div class="row">
+        <button id="add">+ Agregar</button>
+        <button id="rand" class="sec">Aleatorio</button>
+        <button id="example" class="sec">Ejemplo</button>
+        <button id="clear" class="sec">Limpiar</button>
+      </div>
+      <div class="row"><button id="run" style="width:100%">▶ Simular</button></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>Diagrama de Gantt</h2>
+      <div class="gantt" id="gantt"></div>
+      <div class="axis" id="axis"></div>
+      <div class="legend">Franja rayada = CPU ociosa. Las franjas tenues aún no se han ejecutado en el tiempo actual.</div>
+    </div>
+
+    <div class="card">
+      <h2>Control paso a paso</h2>
+      <input type="range" id="time" min="0" max="0" value="0">
+      <div class="row">
+        <button id="prev" class="sec">⏮ Anterior</button>
+        <button id="play">⏵ Reproducir</button>
+        <button id="next" class="sec">Siguiente ⏭</button>
+        <label style="margin:0">Velocidad</label>
+        <select id="speed"><option value="1000">Lenta</option><option value="500" selected>Normal</option><option value="150">Rápida</option></select>
+      </div>
+      <div class="status" style="margin-top:12px">
+        <div>Tiempo: <b id="sT">0</b></div>
+        <div>En CPU: <b id="sCpu">—</b></div>
+        <div>Cola de listos: <span id="sQ">—</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Métricas</h2>
+      <table>
+        <thead><tr><th>PID</th><th>Llegada</th><th>Ráfaga</th><th>Inicio</th><th>Fin</th><th>Espera</th><th>Retorno</th><th>Respuesta</th></tr></thead>
+        <tbody id="metrics"></tbody>
+        <tfoot id="avg"></tfoot>
+      </table>
+      <div class="legend">Retorno = Fin − Llegada · Espera = Retorno − Ráfaga · Respuesta = Primer inicio − Llegada</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const COLORS = ['#38bdf8','#4ade80','#facc15','#f87171','#c084fc','#fb923c','#2dd4bf','#f472b6','#a3e635','#818cf8'];
+const $ = id => document.getElementById(id);
+let procs = [], result = null, timer = null;
+
+function color(pid) { return COLORS[(parseInt(pid.slice(1), 10) - 1) % COLORS.length]; }
+
+/* ---------- Motor de simulación (un tick = 1 unidad de tiempo) ---------- */
+function simulate(list, algo, quantum) {
+  const ps = list.map(p => ({ ...p, rem: p.burst, start: null, end: null }));
+  const ticks = []; // {pid|null, queue:[pid]}
+  const ready = [];
+  const arrived = new Set();
+  let t = 0, done = 0, cur = null, used = 0;
+
+  const admit = () => ps.filter(p => p.arrival <= t && !arrived.has(p.pid))
+    .sort((a, b) => a.arrival - b.arrival || a.idx - b.idx)
+    .forEach(p => { arrived.add(p.pid); ready.push(p); });
+
+  const pick = () => {
+    if (!ready.length) return null;
+    if (algo === 'fcfs' || algo === 'rr') return ready[0];
+    const key = algo === 'sjf' ? p => p.burst : p => p.rem;
+    return [...ready].sort((a, b) => key(a) - key(b) || a.arrival - b.arrival || a.idx - b.idx)[0];
+  };
+
+  while (done < ps.length) {
+    admit();
+    if (algo === 'srtf' && cur) { // expropia solo si hay uno estrictamente menor
+      const best = pick();
+      if (best && best.rem < cur.rem) { ready.push(cur); cur = null; }
+    }
+    if (!cur) {
+      cur = pick();
+      if (cur) { ready.splice(ready.indexOf(cur), 1); used = 0; }
+    }
+    if (cur && cur.start === null) cur.start = t;
+    ticks.push({ pid: cur ? cur.pid : null, queue: ready.map(p => p.pid) });
+    t++;
+    if (cur) {
+      cur.rem--; used++;
+      if (cur.rem === 0) { cur.end = t; done++; cur = null; }
+      else if (algo === 'rr' && used >= quantum) {
+        admit(); // los que llegan en este instante entran antes que el expulsado
+        ready.push(cur); cur = null;
+      }
+    }
+  }
+  return { ticks, ps };
+}
+
+/* ---------- Interfaz ---------- */
+function renderProcs() {
+  $('procs').innerHTML = '';
+  procs.forEach((p, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><b style="color:${color(p.pid)}">${p.pid}</b></td>
+      <td><input type="number" min="0" value="${p.arrival}" data-i="${i}" data-f="arrival"></td>
+      <td><input type="number" min="1" value="${p.burst}" data-i="${i}" data-f="burst"></td>
+      <td><button class="del" data-del="${i}">✕</button></td>`;
+    $('procs').appendChild(tr);
+  });
+}
+function renumber() { procs.forEach((p, i) => { p.pid = 'P' + (i + 1); p.idx = i; }); }
+function setProcs(arr) { procs = arr.map(([arrival, burst]) => ({ arrival, burst })); renumber(); renderProcs(); }
+
+$('procs').addEventListener('input', e => {
+  const t = e.target;
+  if (t.dataset.f) procs[+t.dataset.i][t.dataset.f] = parseInt(t.value, 10);
+});
+$('procs').addEventListener('click', e => {
+  const i = e.target.dataset.del;
+  if (i !== undefined) { procs.splice(+i, 1); renumber(); renderProcs(); }
+});
+$('add').onclick = () => { procs.push({ arrival: 0, burst: 1 }); renumber(); renderProcs(); };
+$('clear').onclick = () => { stop(); setProcs([]); result = null; draw(); };
+$('example').onclick = () => setProcs([[0, 8], [1, 4], [2, 9], [3, 5]]);
+$('rand').onclick = () => {
+  const n = 4 + Math.floor(Math.random() * 3);
+  setProcs(Array.from({ length: n }, () => [Math.floor(Math.random() * 8), 1 + Math.floor(Math.random() * 9)]));
+};
+$('algo').onchange = () => { $('qWrap').style.display = $('algo').value === 'rr' ? 'block' : 'none'; };
+
+function run() {
+  stop();
+  const err = $('err'); err.textContent = '';
+  if (!procs.length) { err.textContent = 'Agrega al menos un proceso.'; return; }
+  if (procs.some(p => !Number.isInteger(p.arrival) || p.arrival < 0 || !Number.isInteger(p.burst) || p.burst < 1)) {
+    err.textContent = 'Llegada ≥ 0 y ráfaga ≥ 1 (enteros).'; return;
+  }
+  const algo = $('algo').value, q = parseInt($('quantum').value, 10);
+  if (algo === 'rr' && !(q >= 1)) { err.textContent = 'El quantum debe ser ≥ 1.'; return; }
+  result = simulate(procs, algo, q);
+  $('time').max = result.ticks.length;
+  $('time').value = 0;
+  draw();
+}
+
+function segments(ticks) {
+  const segs = [];
+  ticks.forEach((tk, i) => {
+    const last = segs[segs.length - 1];
+    if (last && last.pid === tk.pid) last.len++;
+    else segs.push({ pid: tk.pid, from: i, len: 1 });
+  });
+  return segs;
+}
+
+function draw() {
+  const UNIT = 30;
+  const g = $('gantt'), ax = $('axis'), m = $('metrics'), av = $('avg');
+  g.innerHTML = ax.innerHTML = m.innerHTML = av.innerHTML = '';
+  if (!result) { $('sT').textContent = 0; $('sCpu').textContent = '—'; $('sQ').textContent = '—'; return; }
+  const T = +$('time').value, { ticks, ps } = result;
+
+  segments(ticks).forEach(s => {
+    const d = document.createElement('div');
+    d.className = 'seg' + (s.pid ? '' : ' idle') + (s.from >= T ? ' future' : '');
+    d.style.width = s.len * UNIT + 'px';
+    if (s.pid) d.style.background = color(s.pid);
+    d.textContent = s.pid || 'ocio';
+    g.appendChild(d);
+  });
+  for (let i = 0; i <= ticks.length; i++) {
+    const d = document.createElement('div');
+    d.style.width = (i === ticks.length ? 20 : UNIT) + 'px';
+    d.textContent = i;
+    if (i === T) { d.style.color = '#38bdf8'; d.style.fontWeight = '700'; }
+    ax.appendChild(d);
+  }
+
+  $('sT').textContent = T;
+  const running = T < ticks.length ? ticks[T] : null;
+  $('sCpu').textContent = running ? (running.pid || 'ocio') : 'terminado';
+  $('sQ').innerHTML = running && running.queue.length
+    ? running.queue.map(p => `<span class="chip" style="background:${color(p)}">${p}</span>`).join('')
+    : '—';
+
+  let sw = 0, st = 0, sr = 0;
+  ps.forEach(p => {
+    const ta = p.end - p.arrival, w = ta - p.burst, r = p.start - p.arrival;
+    sw += w; st += ta; sr += r;
+    m.insertAdjacentHTML('beforeend', `<tr><td><b style="color:${color(p.pid)}">${p.pid}</b></td><td>${p.arrival}</td><td>${p.burst}</td><td>${p.start}</td><td>${p.end}</td><td>${w}</td><td>${ta}</td><td>${r}</td></tr>`);
+  });
+  const n = ps.length, f = x => (x / n).toFixed(2);
+  const busy = ticks.filter(t => t.pid).length;
+  av.innerHTML = `<tr><td colspan="5">Promedios</td><td>${f(sw)}</td><td>${f(st)}</td><td>${f(sr)}</td></tr>
+    <tr><td colspan="8">Utilización de CPU: ${(100 * busy / ticks.length).toFixed(1)}% · Throughput: ${(n / ticks.length).toFixed(3)} proc/u</td></tr>`;
+}
+
+function stop() { clearInterval(timer); timer = null; $('play').textContent = '⏵ Reproducir'; }
+function step(d) {
+  if (!result) return;
+  const el = $('time'); el.value = Math.max(0, Math.min(+el.max, +el.value + d)); draw();
+}
+$('run').onclick = run;
+$('time').oninput = draw;
+$('prev').onclick = () => { stop(); step(-1); };
+$('next').onclick = () => { stop(); step(1); };
+$('play').onclick = () => {
+  if (timer) return stop();
+  if (!result) return;
+  if (+$('time').value >= +$('time').max) $('time').value = 0;
+  $('play').textContent = '⏸ Pausar';
+  timer = setInterval(() => {
+    if (+$('time').value >= +$('time').max) return stop();
+    step(1);
+  }, +$('speed').value);
+};
+$('speed').onchange = () => { if (timer) { stop(); $('play').click(); } };
+
+$('example').click();
+</script>
+</body>
+</html>
